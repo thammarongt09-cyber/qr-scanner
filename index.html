@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QR Code Equipment Tracker</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <script src="https://unpkg.com/html5-qrcode"></script>
+  <style>
+    body { background-color: #f8f9fa; }
+    .card { border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+    #reader { width: 100%; max-width: 450px; margin: 0 auto; border-radius: 8px; overflow: hidden; background: #000; }
+    .history-box {
+      background-color: #eef2f7;
+      font-family: monospace;
+      font-size: 0.9rem;
+      white-space: pre-wrap;
+      max-height: 200px;
+      overflow-y: auto;
+    }
+  </style>
+</head>
+<body>
+<div class="container py-4" style="max-width: 720px;">
+  <h3 class="text-center mb-4 fw-bold text-primary">ระบบสแกนและบันทึกข้อมูลอุปกรณ์</h3>
+
+  <!-- ส่วนที่ 1: สแกน QR Code -->
+  <div class="card mb-4">
+    <div class="card-body text-center">
+      <h5 class="card-title fw-bold mb-3">1. สแกน QR Code เพื่อดูหรือบันทึกข้อมูล</h5>
+
+      <div class="d-flex flex-wrap justify-content-center gap-2 mb-2">
+        <button type="button" id="btnStartScan" class="btn btn-success" onclick="startScanner()">
+          เปิดกล้องสแกนแบบสด
+        </button>
+        <button type="button" id="btnStopScan" class="btn btn-danger" onclick="stopScanner()" style="display:none;">
+          ปิดกล้อง
+        </button>
+        <button type="button" class="btn btn-outline-primary" onclick="document.getElementById('qrFileInput').click()">
+          📷 ถ่ายภาพเพื่อสแกน
+        </button>
+        <input type="file" id="qrFileInput" accept="image/*" capture="environment" style="display:none;" onchange="scanFromFile(event)">
+      </div>
+
+      <!-- เมนูเลือกเลนส์กล้อง -->
+      <div id="cameraSelectGroup" class="my-2 mx-auto" style="max-width: 320px; display:none;">
+        <select id="cameraSelect" class="form-select form-select-sm" onchange="switchCamera(this.value)"></select>
+      </div>
+
+      <div id="scanStatus" class="fw-bold my-2" style="display:none;"></div>
+      <div id="reader"></div>
+    </div>
+  </div>
+
+  <!-- ส่วนที่ 2: ฟอร์มข้อมูลอุปกรณ์และประวัติ (History) -->
+  <div class="card">
+    <div class="card-body">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <h5 class="card-title fw-bold mb-0">2. ข้อมูลอุปกรณ์และประวัติ</h5>
+        <span id="statusBadge" class="badge bg-secondary">รอรหัส QR Code</span>
+      </div>
+
+      <form id="equipmentForm" onsubmit="handleSave(event)">
+        <div class="mb-3">
+          <label class="form-label fw-bold">รหัส QR Code</label>
+          <div class="input-group">
+            <input type="text" id="qrId" class="form-control" placeholder="สแกนจากกล้อง หรือพิมพ์รหัสเพื่อค้นหา" required>
+            <button type="button" class="btn btn-outline-secondary" onclick="lookupManual()">ค้นหาข้อมูล</button>
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="col-md-6 mb-3">
+            <label class="form-label">Equipment Type</label>
+            <input type="text" id="equipmentType" class="form-control" placeholder="เช่น Notebook, Printer, Router" required>
+          </div>
+          <div class="col-md-6 mb-3">
+            <label class="form-label">Model</label>
+            <input type="text" id="model" class="form-control" placeholder="ระบุรุ่นอุปกรณ์" required>
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="col-md-6 mb-3">
+            <label class="form-label">Serial</label>
+            <input type="text" id="serial" class="form-control" placeholder="ระบุหมายเลข Serial Number" required>
+          </div>
+          <div class="col-md-6 mb-3">
+            <label class="form-label">Remark</label>
+            <input type="text" id="remark" class="form-control" placeholder="หมายเหตุเพิ่มเติม">
+          </div>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label fw-bold">History (ประวัติที่บันทึกไว้ทั้งหมด)</label>
+          <div id="existingHistory" class="form-control history-box">ยังไม่มีประวัติสำหรับรหัสนี้</div>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label fw-bold text-primary">เพิ่มรายการ History ใหม่ (ระบุวันที่และเวลาปัจจุบันอัตโนมัติ)</label>
+          <input type="text" id="newHistory" class="form-control" placeholder="เช่น ตรวจสอบสภาพปกติ / เปลี่ยนอะไหล่ / ส่งซ่อม">
+        </div>
+
+        <button type="submit" id="btnSave" class="btn btn-primary w-100 py-2 fw-bold">
+          บันทึกข้อมูลลง Google Sheets
+        </button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+  // =========================================================================
+  // นำลิงก์ Web App URL (ที่ลงท้ายด้วย /exec) มาวางแทนที่ข้อความด้านล่างนี้
+  // =========================================================================
+  const API_URL = 'https://script.google.com/macros/s/AKfycbzkj2ymH4PHwZTnvohKrZDusf1O3vNXomv3i8acHGz3zwdxt5_puL7tUImZwY4RdUmU/exec';
+
+  let html5QrCode = null;
+  let isScanning = false;
+
+  // 1. เปิดกล้องสแกนแบบสด
+  function startScanner() {
+    const statusEl = document.getElementById('scanStatus');
+    statusEl.style.display = 'block';
+    statusEl.className = 'text-warning fw-bold my-2';
+    statusEl.innerText = 'กำลังขอสิทธิ์เข้าถึงกล้อง...';
+
+    Html5Qrcode.getCameras().then(devices => {
+      if (devices && devices.length > 0) {
+        let selectedCameraId = devices[devices.length - 1].id;
+        for (let i = 0; i < devices.length; i++) {
+          const label = devices[i].label.toLowerCase();
+          if (label.includes('back') || label.includes('rear') || label.includes('environment')) {
+            selectedCameraId = devices[i].id;
+            break;
+          }
+        }
+
+        const camSelect = document.getElementById('cameraSelect');
+        camSelect.innerHTML = '';
+        devices.forEach((device, idx) => {
+          const opt = document.createElement('option');
+          opt.value = device.id;
+          opt.text = device.label || ('กล้องตัวที่ ' + (idx + 1));
+          if (device.id === selectedCameraId) opt.selected = true;
+          camSelect.appendChild(opt);
+        });
+        document.getElementById('cameraSelectGroup').style.display = 'block';
+
+        runCameraById(selectedCameraId);
+      } else {
+        statusEl.className = 'text-danger fw-bold my-2';
+        statusEl.innerText = 'ไม่พบกล้องในอุปกรณ์นี้';
+      }
+    }).catch(err => {
+      statusEl.className = 'text-danger fw-bold my-2';
+      statusEl.innerText = 'เปิดกล้องไม่สำเร็จ: ' + err;
+    });
+  }
+
+  function runCameraById(cameraId) {
+    const statusEl = document.getElementById('scanStatus');
+    statusEl.style.display = 'block';
+    statusEl.className = 'text-primary fw-bold my-2';
+    statusEl.innerText = 'กำลังเปิดภาพจากกล้อง...';
+
+    document.getElementById('btnStartScan').style.display = 'none';
+    document.getElementById('btnStopScan').style.display = 'inline-block';
+
+    if (html5QrCode && isScanning) {
+      html5QrCode.stop().then(() => {
+        isScanning = false;
+        startStream(cameraId);
+      }).catch(() => {
+        isScanning = false;
+        startStream(cameraId);
+      });
+    } else {
+      startStream(cameraId);
+    }
+  }
+
+  function startStream(cameraId) {
+    const statusEl = document.getElementById('scanStatus');
+    html5QrCode = new Html5Qrcode("reader");
+    html5QrCode.start(
+      cameraId,
+      { fps: 10, qrbox: { width: 220, height: 220 } },
+      (decodedText) => {
+        stopScanner();
+        document.getElementById('qrId').value = decodedText;
+        fetchDataFromSheet(decodedText);
+      },
+      (errorMessage) => {}
+    ).then(() => {
+      isScanning = true;
+      statusEl.style.display = 'none';
+    }).catch(err => {
+      isScanning = false;
+      stopScanner();
+      statusEl.style.display = 'block';
+      statusEl.className = 'text-danger fw-bold my-2';
+      statusEl.innerText = 'ไม่สามารถแสดงภาพกล้องได้: ' + err;
+    });
+  }
+
+  function switchCamera(cameraId) {
+    if (cameraId) runCameraById(cameraId);
+  }
+
+  function stopScanner() {
+    if (html5QrCode && isScanning) {
+      html5QrCode.stop().then(() => {
+        html5QrCode.clear();
+        isScanning = false;
+      }).catch(() => {
+        isScanning = false;
+      });
+    }
+    document.getElementById('btnStartScan').style.display = 'inline-block';
+    document.getElementById('btnStopScan').style.display = 'none';
+    document.getElementById('cameraSelectGroup').style.display = 'none';
+  }
+
+  // 2. สแกนผ่านการถ่ายภาพหรืออัปโหลดไฟล์
+  function scanFromFile(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const statusEl = document.getElementById('scanStatus');
+    statusEl.style.display = 'block';
+    statusEl.className = 'text-primary fw-bold my-2';
+    statusEl.innerText = 'กำลังอ่านข้อมูลจากภาพ QR Code...';
+
+    const fileScanner = new Html5Qrcode("reader");
+    fileScanner.scanFile(file, false)
+      .then(decodedText => {
+        statusEl.style.display = 'none';
+        document.getElementById('qrId').value = decodedText;
+        fetchDataFromSheet(decodedText);
+      })
+      .catch(err => {
+        statusEl.style.display = 'none';
+        alert("อ่าน QR Code ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง");
+      })
+      .finally(() => {
+        fileScanner.clear();
+        event.target.value = '';
+      });
+  }
+
+  function lookupManual() {
+    const qrId = document.getElementById('qrId').value.trim();
+    if (!qrId) {
+      alert('กรุณาระบุรหัส QR Code ก่อนค้นหา');
+      return;
+    }
+    fetchDataFromSheet(qrId);
+  }
+
+  // 3. ดึงข้อมูลจาก Google Sheets ผ่าน API
+  function fetchDataFromSheet(qrId) {
+    if (!API_URL.startsWith('http')) {
+      alert('กรุณาใส่ลิงก์ Web App URL ในโค้ด index.html ก่อนใช้งาน');
+      return;
+    }
+
+    const badge = document.getElementById('statusBadge');
+    badge.className = 'badge bg-warning text-dark';
+    badge.innerText = 'กำลังค้นหาข้อมูล...';
+
+    fetch(`${API_URL}?qrId=${encodeURIComponent(qrId)}`)
+      .then(response => response.json())
+      .then(res => {
+        if (res.found) {
+          badge.className = 'badge bg-success';
+          badge.innerText = 'พบข้อมูลเดิมในระบบ';
+          document.getElementById('equipmentType').value = res.equipmentType;
+          document.getElementById('model').value = res.model;
+          document.getElementById('serial').value = res.serial;
+          document.getElementById('remark').value = res.remark;
+          document.getElementById('existingHistory').innerText = res.history || 'ยังไม่มีประวัติ';
+        } else {
+          badge.className = 'badge bg-info text-dark';
+          badge.innerText = 'รหัสใหม่ (ยังไม่มีข้อมูลในระบบ)';
+          document.getElementById('equipmentType').value = '';
+          document.getElementById('model').value = '';
+          document.getElementById('serial').value = '';
+          document.getElementById('remark').value = '';
+          document.getElementById('existingHistory').innerText = 'ยังไม่มีประวัติสำหรับรหัสนี้ (เมื่อบันทึกจะเริ่มสร้างประวัติแรก)';
+        }
+        document.getElementById('newHistory').value = '';
+      })
+      .catch(err => {
+        badge.className = 'badge bg-danger';
+        badge.innerText = 'เชื่อมต่อฐานข้อมูลไม่สำเร็จ';
+        alert('ไม่สามารถเชื่อมต่อ Google Sheets ได้ กรุณาตรวจสอบลิงก์ API_URL และสิทธิ์การ Deploy (Anyone)');
+      });
+  }
+
+  // 4. บันทึกข้อมูลลง Google Sheets ผ่าน API
+  function handleSave(e) {
+    e.preventDefault();
+    if (!API_URL.startsWith('http')) {
+      alert('กรุณาใส่ลิงก์ Web App URL ในโค้ด index.html ก่อนใช้งาน');
+      return;
+    }
+
+    const btn = document.getElementById('btnSave');
+    btn.disabled = true;
+    btn.innerText = 'กำลังบันทึกข้อมูล...';
+
+    const payload = {
+      qrId: document.getElementById('qrId').value,
+      equipmentType: document.getElementById('equipmentType').value,
+      model: document.getElementById('model').value,
+      serial: document.getElementById('serial').value,
+      remark: document.getElementById('remark').value,
+      newHistory: document.getElementById('newHistory').value
+    };
+
+    // ส่งแบบ text/plain เพื่อเลี่ยงปัญหา CORS Preflight ของ Google Apps Script
+    fetch(API_URL, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    })
+      .then(response => response.json())
+      .then(res => {
+        btn.disabled = false;
+        btn.innerText = 'บันทึกข้อมูลลง Google Sheets';
+        if (res.success) {
+          document.getElementById('existingHistory').innerText = res.history;
+          document.getElementById('newHistory').value = '';
+          const badge = document.getElementById('statusBadge');
+          badge.className = 'badge bg-success';
+          badge.innerText = 'บันทึกข้อมูลล่าสุดแล้ว';
+          alert(res.message);
+        } else {
+          alert(res.message || 'เกิดข้อผิดพลาดในการบันทึก');
+        }
+      })
+      .catch(err => {
+        btn.disabled = false;
+        btn.innerText = 'บันทึกข้อมูลลง Google Sheets';
+        alert('เกิดข้อผิดพลาดในการเชื่อมต่อ: ' + err);
+      });
+  }
+</script>
+</body>
+</html>
